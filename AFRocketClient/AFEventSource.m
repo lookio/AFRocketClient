@@ -1,5 +1,5 @@
 // AFEventSource.m
-// 
+//
 // Copyright (c) 2013 AFNetworking (http://afnetworking.com)
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -8,10 +8,10 @@
 // to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
 // copies of the Software, and to permit persons to whom the Software is
 // furnished to do so, subject to the following conditions:
-// 
+//
 // The above copyright notice and this permission notice shall be included in
 // all copies or substantial portions of the Software.
-// 
+//
 // THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 // IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
 // FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
@@ -30,39 +30,50 @@ NSString * const AFEventSourceErrorDomain = @"com.alamofire.networking.event-sou
 static NSString * const AFEventSourceLockName = @"com.alamofire.networking.event-source.lock";
 static NSUInteger const AFEventSourceListenersCapacity = 100;
 
-static NSDictionary * AFServerSentEventFieldsFromData(NSData *data, NSError * __autoreleasing *error) {
+static NSArray * AFServerSentEventFieldsFromData(NSData *data, NSError * __autoreleasing *error) {
     if (!data || [data length] == 0) {
         return nil;
     }
-
+    
     NSString *string = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
-    NSMutableDictionary *mutableFields = [NSMutableDictionary dictionary];
-
-    for (NSString *line in [string componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]]) {
-        // Ignore nil or blank lines, as well as lines beginning with a colon
-        if (!line || [line length] == 0 || [line hasPrefix:@":"]) {
-            continue;
-        }
-
-        @autoreleasepool {
-            NSScanner *scanner = [[NSScanner alloc] initWithString:line];
-            scanner.charactersToBeSkipped = [NSCharacterSet whitespaceCharacterSet];
-            NSString *key, *value;
-            [scanner scanUpToString:@":" intoString:&key];
-            [scanner scanString:@":" intoString:nil];
-            [scanner scanUpToString:@"\n" intoString:&value];
-
-            if (key && value) {
-                if (mutableFields[key]) {
-                    mutableFields[key] = [mutableFields[key] stringByAppendingFormat:@"\n%@", value];
-                } else {
-                    mutableFields[key] = value;
+    NSMutableArray *mutableFieldsArray = [NSMutableArray array];
+    
+    NSArray *eventStringsArray = [string componentsSeparatedByString:@"\n\n"];
+    
+    for (NSString *eventString in eventStringsArray) {
+        if (![eventString length])
+            break;
+        
+        NSMutableDictionary *mutableFields = [NSMutableDictionary dictionary];
+        
+        for (NSString *line in [eventString componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]]) {
+            // Ignore nil or blank lines, as well as lines beginning with a colon
+            if (!line || [line length] == 0 || [line hasPrefix:@":"]) {
+                continue;
+            }
+            
+            @autoreleasepool {
+                NSScanner *scanner = [[NSScanner alloc] initWithString:line];
+                scanner.charactersToBeSkipped = [NSCharacterSet whitespaceCharacterSet];
+                NSString *key, *value;
+                [scanner scanUpToString:@":" intoString:&key];
+                [scanner scanString:@":" intoString:nil];
+                [scanner scanUpToString:@"\n" intoString:&value];
+                
+                if (key && value) {
+                    if (mutableFields[key]) {
+                        mutableFields[key] = [mutableFields[key] stringByAppendingFormat:@"\n%@", value];
+                    } else {
+                        mutableFields[key] = value;
+                    }
                 }
             }
         }
+        
+        [mutableFieldsArray addObject:mutableFields];
     }
-
-    return mutableFields;
+    
+    return mutableFieldsArray;
 }
 
 @implementation AFServerSentEvent
@@ -71,19 +82,44 @@ static NSDictionary * AFServerSentEventFieldsFromData(NSData *data, NSError * __
     if (!fields) {
         return nil;
     }
-
+    
     AFServerSentEvent *event = [[self alloc] init];
-
+    
     NSMutableDictionary *mutableFields = [NSMutableDictionary dictionaryWithDictionary:fields];
     event.event = mutableFields[@"event"];
     event.identifier = mutableFields[@"id"];
     event.data = [mutableFields[@"data"] dataUsingEncoding:NSUTF8StringEncoding];
     event.retry = [mutableFields[@"retry"] integerValue];
-
+    
     [mutableFields removeObjectsForKeys:@[@"event", @"id", @"data", @"retry"]];
     event.userInfo = mutableFields;
-
+    
     return event;
+}
+
++ (NSArray*)eventsWithFields:(NSArray *)fieldsArray {
+    if (!fieldsArray) {
+        return nil;
+    }
+    
+    NSMutableArray *events = [NSMutableArray array];
+    for (NSDictionary *fields in fieldsArray) {
+        
+        AFServerSentEvent *event = [[self alloc] init];
+        
+        NSMutableDictionary *mutableFields = [NSMutableDictionary dictionaryWithDictionary:fields];
+        event.event = mutableFields[@"event"];
+        event.identifier = mutableFields[@"id"];
+        event.data = [mutableFields[@"data"] dataUsingEncoding:NSUTF8StringEncoding];
+        event.retry = [mutableFields[@"retry"] integerValue];
+        
+        [mutableFields removeObjectsForKeys:@[@"event", @"id", @"data", @"retry"]];
+        event.userInfo = mutableFields;
+        
+        [events addObject:event];
+    }
+    
+    return events;
 }
 
 #pragma mark - NSCoding
@@ -93,12 +129,12 @@ static NSDictionary * AFServerSentEventFieldsFromData(NSData *data, NSError * __
     if (!self) {
         return nil;
     }
-
+    
     self.event = [aDecoder decodeObjectForKey:@"event"];
     self.identifier = [aDecoder decodeObjectForKey:@"identifier"];
     self.data = [aDecoder decodeObjectForKey:@"data"];
     self.retry = [aDecoder decodeIntegerForKey:@"retry"];
-
+    
     return self;
 }
 
@@ -117,7 +153,7 @@ static NSDictionary * AFServerSentEventFieldsFromData(NSData *data, NSError * __
     event.identifier = self.identifier;
     event.data = self.data;
     event.retry = self.retry;
-
+    
     return event;
 }
 
@@ -148,7 +184,7 @@ typedef NS_ENUM(NSUInteger, AFEventSourceState) {
 - (instancetype)initWithURL:(NSURL *)url {
     NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:url];
     [request setValue:@"text/event-stream" forHTTPHeaderField:@"Accept"];
-
+    
     return [self initWithRequest:request];
 }
 
@@ -157,14 +193,14 @@ typedef NS_ENUM(NSUInteger, AFEventSourceState) {
     if (!self) {
         return nil;
     }
-
+    
     self.request = request;
-
+    
     self.listenersKeyedByEvent = [[NSMapTable alloc] initWithKeyOptions:NSPointerFunctionsCopyIn valueOptions:NSPointerFunctionsStrongMemory capacity:AFEventSourceListenersCapacity];
-
+    
     self.lock = [[NSRecursiveLock alloc] init];
     self.lock.name = AFEventSourceLockName;
-
+    
     NSError *error = nil;
     [self open:&error];
     if (error) {
@@ -172,7 +208,7 @@ typedef NS_ENUM(NSUInteger, AFEventSourceState) {
             [self.delegate eventSource:self didFailWithError:error];
         }
     }
-
+    
     return self;
 }
 
@@ -197,31 +233,31 @@ typedef NS_ENUM(NSUInteger, AFEventSourceState) {
         if (error) {
             *error = [NSError errorWithDomain:AFEventSourceErrorDomain code:0 userInfo:@{ NSLocalizedDescriptionKey: NSLocalizedStringFromTable(@"Event Source Already Opened", @"AFEventSource", nil) }];
         }
-
+        
         return NO;
     }
-
+    
     [self.lock lock];
     self.state = AFEventSourceConnecting;
-
+    
     self.requestOperation = [[AFHTTPRequestOperation alloc] initWithRequest:self.request];
     self.requestOperation.responseSerializer = [AFServerSentEventResponseSerializer serializer];
     self.outputStream = [NSOutputStream outputStreamToMemory];
     self.outputStream.delegate = self;
     self.requestOperation.outputStream = self.outputStream;
-
+    
     // TODO Determine correct retry behavior / customization
-//    [self.requestOperation setCompletionBlockWithSuccess:^(AFHTTPRequestOperation *operation, id responseObject) {
-//        NSLog(@"Success: %@", responseObject);
-//    } failure:^(AFHTTPRequestOperation *operation, NSError *error) {
-//        NSLog(@"Failure: %@", error);
-//    }];
+    //    [self.requestOperation setCompletionBlockWithSuccess:^(AFHTTPRequestOperation *operation, id responseObject) {
+    //        NSLog(@"Success: %@", responseObject);
+    //    } failure:^(AFHTTPRequestOperation *operation, NSError *error) {
+    //        NSLog(@"Failure: %@", error);
+    //    }];
     
     [self.requestOperation start];
-
+    
     self.state = AFEventSourceOpen;
     [self.lock unlock];
-
+    
     return YES;
 }
 
@@ -230,16 +266,16 @@ typedef NS_ENUM(NSUInteger, AFEventSourceState) {
         if (error) {
             *error = [NSError errorWithDomain:AFEventSourceErrorDomain code:0 userInfo:@{ NSLocalizedDescriptionKey: NSLocalizedStringFromTable(@"Event Source Already Closed", @"AFEventSource", nil) }];
         }
-
+        
         return NO;
     }
-
+    
     [self.lock lock];
     [self.requestOperation cancel];
-
+    
     self.state = AFEventSourceClosed;
     [self.lock unlock];
-
+    
     return YES;
 }
 
@@ -252,12 +288,12 @@ typedef NS_ENUM(NSUInteger, AFEventSourceState) {
     if (!mutableListenersKeyedByIdentifier) {
         mutableListenersKeyedByIdentifier = [NSMutableDictionary dictionary];
     }
-
+    
     NSUInteger identifier = [[NSUUID UUID] hash];
     mutableListenersKeyedByIdentifier[@(identifier)] = [block copy];
     
     [self.listenersKeyedByEvent setObject:mutableListenersKeyedByIdentifier forKey:event];
-
+    
     return identifier;
 }
 
@@ -280,27 +316,32 @@ typedef NS_ENUM(NSUInteger, AFEventSourceState) {
 
 #pragma mark - NSStreamDelegate
 
-- (void)stream:(NSStream *)stream handleEvent:(NSStreamEvent)eventCode {    
+- (void)stream:(NSStream *)stream handleEvent:(NSStreamEvent)eventCode {
     switch (eventCode) {
         case NSStreamEventHasSpaceAvailable: {
             NSData *data = [stream propertyForKey:NSStreamDataWrittenToMemoryStreamKey];
+            
             NSError *error = nil;
-            AFServerSentEvent *event = [[AFServerSentEventResponseSerializer serializer] responseObjectForResponse:self.lastResponse data:[data subdataWithRange:NSMakeRange(self.offset, [data length] - self.offset)] error:&error];
+            
+            NSArray *events = [[AFServerSentEventResponseSerializer serializer] responseObjectForResponse:self.lastResponse data:[data subdataWithRange:NSMakeRange(self.offset, [data length] - self.offset)] error:&error];
             self.offset = [data length];
-
+            
             if (error) {
                 if ([self.delegate respondsToSelector:@selector(eventSource:didFailWithError:)]) {
                     [self.delegate eventSource:self didFailWithError:error];
                 }
             } else {
-                if (event) {
+                if (events) {
                     if ([self.delegate respondsToSelector:@selector(eventSource:didReceiveMessage:)]) {
-                        [self.delegate eventSource:self didReceiveMessage:event];
+                        for (AFServerSentEvent *event in events)
+                            [self.delegate eventSource:self didReceiveMessage:event];
                     }
-
-                    for (AFServerSentEventBlock block in [self.listenersKeyedByEvent objectForKey:event.event]) {
-                        if (block) {
-                            block(event);
+                    
+                    for (AFServerSentEvent *event in events) {
+                        for (AFServerSentEventBlock block in [self.listenersKeyedByEvent objectForKey:event.event]) {
+                            if (block) {
+                                block(event);
+                            }
                         }
                     }
                 }
@@ -316,12 +357,12 @@ typedef NS_ENUM(NSUInteger, AFEventSourceState) {
 
 - (id)initWithCoder:(NSCoder *)aDecoder {
     NSURLRequest *request = [aDecoder decodeObjectForKey:@"request"];
-
+    
     self = [self initWithRequest:request];
     if (!self) {
         return nil;
     }
-
+    
     return self;
 }
 
@@ -346,9 +387,9 @@ typedef NS_ENUM(NSUInteger, AFEventSourceState) {
     if (!self) {
         return nil;
     }
-
+    
     self.acceptableContentTypes = [[NSSet alloc] initWithObjects:@"text/event-stream", nil];
-
+    
     return self;
 }
 
@@ -361,8 +402,8 @@ typedef NS_ENUM(NSUInteger, AFEventSourceState) {
     if (![self validateResponse:(NSHTTPURLResponse *)response data:data error:error]) {
         return nil;
     }
-
-    return [AFServerSentEvent eventWithFields:AFServerSentEventFieldsFromData(data, error)];
+    
+    return [AFServerSentEvent eventsWithFields:AFServerSentEventFieldsFromData(data, error)];
 }
 
 @end
