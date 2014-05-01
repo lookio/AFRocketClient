@@ -109,7 +109,7 @@
  
  @return An initialized event source object.
  */
-- (instancetype)initWithURL:(NSURL *)url;
+- (instancetype)initWithURL:(NSURL *)url delegate:(id)delegate;
 
 /**
  Initializes an event source with the specified request.
@@ -118,7 +118,7 @@
  
  @return An initialized event source object.
  */
-- (instancetype)initWithRequest:(NSURLRequest *)request;
+- (instancetype)initWithRequest:(NSURLRequest *)request delegate:(id)delegate;
 
 ///-------------------------------------
 /// @name Opening / Closing Event Source
@@ -221,7 +221,8 @@ extern NSString * const AFEventSourceErrorDomain;
  @param error The error associated with the event source.
  */
 - (void)eventSource:(AFEventSource *)source
-   didFailWithError:(NSError *)error;
+   didFailWithError:(NSError *)error
+       responseCode:(NSInteger)responseCode;
 
 @end
 

@@ -38,7 +38,7 @@ static NSArray * AFServerSentEventFieldsFromData(NSData *data, NSError * __autor
     NSString *string = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
     NSMutableArray *mutableFieldsArray = [NSMutableArray array];
     
-    NSArray *eventStringsArray = [string componentsSeparatedByString:@"\n\n"];
+    NSArray *eventStringsArray = [string componentsSeparatedByString:@"\n\n\n"];
     
     for (NSString *eventString in eventStringsArray) {
         if (![eventString length])
@@ -181,20 +181,23 @@ typedef NS_ENUM(NSUInteger, AFEventSourceState) {
 
 @implementation AFEventSource
 
-- (instancetype)initWithURL:(NSURL *)url {
+- (instancetype)initWithURL:(NSURL *)url delegate:(id)delegate {
     NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:url];
     [request setValue:@"text/event-stream" forHTTPHeaderField:@"Accept"];
     
-    return [self initWithRequest:request];
+    return [self initWithRequest:request delegate:delegate];
 }
 
-- (instancetype)initWithRequest:(NSURLRequest *)request {
+- (instancetype)initWithRequest:(NSURLRequest *)request delegate:(id)delegate {
     self = [super init];
     if (!self) {
         return nil;
     }
     
     self.request = request;
+    self.delegate = delegate;
+    
+    NSLog(@"request url is %@", request.description);
     
     self.listenersKeyedByEvent = [[NSMapTable alloc] initWithKeyOptions:NSPointerFunctionsCopyIn valueOptions:NSPointerFunctionsStrongMemory capacity:AFEventSourceListenersCapacity];
     
@@ -204,8 +207,8 @@ typedef NS_ENUM(NSUInteger, AFEventSourceState) {
     NSError *error = nil;
     [self open:&error];
     if (error) {
-        if ([self.delegate respondsToSelector:@selector(eventSource:didFailWithError:)]) {
-            [self.delegate eventSource:self didFailWithError:error];
+        if ([self.delegate respondsToSelector:@selector(eventSource:didFailWithError:responseCode:)]) {
+            [self.delegate eventSource:self didFailWithError:error responseCode:0];
         }
     }
     
@@ -246,12 +249,14 @@ typedef NS_ENUM(NSUInteger, AFEventSourceState) {
     self.outputStream.delegate = self;
     self.requestOperation.outputStream = self.outputStream;
     
-    // TODO Determine correct retry behavior / customization
-    //    [self.requestOperation setCompletionBlockWithSuccess:^(AFHTTPRequestOperation *operation, id responseObject) {
-    //        NSLog(@"Success: %@", responseObject);
-    //    } failure:^(AFHTTPRequestOperation *operation, NSError *error) {
-    //        NSLog(@"Failure: %@", error);
-    //    }];
+    id blockDelegate = self.delegate;
+    AFEventSource *eventSource = self;
+    [self.requestOperation setCompletionBlockWithSuccess:^(AFHTTPRequestOperation *operation, id responseObject) {
+    } failure:^(AFHTTPRequestOperation *operation, NSError *error) {
+        NSLog(@"Failure: %@", error);
+        if ([blockDelegate respondsToSelector:@selector(eventSource:didFailWithError:responseCode:)])
+            [blockDelegate eventSource:eventSource didFailWithError:error responseCode:operation.response.statusCode];
+    }];
     
     [self.requestOperation start];
     
@@ -323,12 +328,19 @@ typedef NS_ENUM(NSUInteger, AFEventSourceState) {
             
             NSError *error = nil;
             
+            // Make sure we receivied an entire event before parsing it
+            NSString *string = [[NSString alloc] initWithData:[data subdataWithRange:NSMakeRange(self.offset, [data length] - self.offset)] encoding:NSUTF8StringEncoding];
+            unichar last = [string characterAtIndex:[string length] - 1];
+            if (![[NSCharacterSet newlineCharacterSet] characterIsMember:last]) {
+                return;
+            }
+            
             NSArray *events = [[AFServerSentEventResponseSerializer serializer] responseObjectForResponse:self.lastResponse data:[data subdataWithRange:NSMakeRange(self.offset, [data length] - self.offset)] error:&error];
             self.offset = [data length];
             
             if (error) {
-                if ([self.delegate respondsToSelector:@selector(eventSource:didFailWithError:)]) {
-                    [self.delegate eventSource:self didFailWithError:error];
+                if ([self.delegate respondsToSelector:@selector(eventSource:didFailWithError:responseCode:)]) {
+                    [self.delegate eventSource:self didFailWithError:error responseCode:0];
                 }
             } else {
                 if (events) {
@@ -358,7 +370,7 @@ typedef NS_ENUM(NSUInteger, AFEventSourceState) {
 - (id)initWithCoder:(NSCoder *)aDecoder {
     NSURLRequest *request = [aDecoder decodeObjectForKey:@"request"];
     
-    self = [self initWithRequest:request];
+    self = [self initWithRequest:request delegate:nil];
     if (!self) {
         return nil;
     }
